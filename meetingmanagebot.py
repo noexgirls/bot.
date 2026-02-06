@@ -16,19 +16,13 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from tinydb import TinyDB, Query
 from tinydb.operations import delete
 
-# Инициализация базы (файл создастся автоматически)
 db = TinyDB("meetings_db.json")
 
-# Таблицы
 meetings_table = db.table("meetings")
 agendas_table = db.table("agendas")
 proposals_table = db.table("proposals")
 users_table = db.table("users")
 
-# --- ВАЖНО ---
-# В production НЕ храните токен в коде. Лучше использовать переменные окружения.
-
-# Path(__file__).parent — папка, где лежит этот .py файл
 BASE_DIR = Path(__file__).resolve().parent
 env_path = BASE_DIR / ".env"
 
@@ -51,7 +45,6 @@ logging.basicConfig(level=logging.INFO)
 bot = Bot(token=API_TOKEN)
 dp = Dispatcher(storage=MemoryStorage())
 
-# — in-memory хранилища —
 meetings: dict[int, dict[str,str]]       = {}
 agendas:  dict[int, list[dict[str,str]]]  = {}
 proposals: dict[int, list[tuple[str,str]]] = {}
@@ -84,7 +77,6 @@ def load_data():
     proposals = {r["meeting_id"]: r["items"] for r in proposals_table.all()}
     all_users = {r["user_id"] for r in users_table.all()}
 
-# — FSM-состояния —
 class States(StatesGroup):
     editing_select  = State()
     editing_date    = State()
@@ -110,12 +102,9 @@ class States(StatesGroup):
     agenda_edit_desc  = State()
     agenda_edit_type  = State()
     agenda_assign_user = State()
-    # Добавлено: состояние выбора повестки из списка
     agenda_view_select = State()
 
 
-
-# — inline-клавиатуры —
 USER_MAIN_KB = InlineKeyboardMarkup(inline_keyboard=[
     [InlineKeyboardButton(text="📋 Список совещаний", callback_data="menu_list")],
     [InlineKeyboardButton(text="➕ Предложить тему", callback_data="menu_propose")],
@@ -141,7 +130,6 @@ LIST_KB = InlineKeyboardMarkup(inline_keyboard=[
 @dp.callback_query(F.data == "list_propose")
 async def cb_list_propose(c: types.CallbackQuery, state: FSMContext):
     await c.answer()
-    # точно как в общем меню «➕ Предложить тему» — спрашиваем номер совещания
     if not meetings:
         kb = ADMIN_MAIN_KB if c.from_user.id in ADMIN_IDS else USER_MAIN_KB
         return await c.message.answer("Сначала создайте совещание.", reply_markup=kb)
@@ -229,7 +217,6 @@ def list_keyboard(page: int, total: int, is_admin: bool):
     else:
         kb_buttons.append([InlineKeyboardButton(text="📝 Предложить тему", callback_data="list_propose")])
 
-    # Добавляем кнопку просмотра повестки (запрос номера совещания)
     kb_buttons.append([InlineKeyboardButton(text="ℹ️ Подробнее", callback_data="list_details")])
 
     kb_buttons.append(nav_buttons) if nav_buttons else None
@@ -262,7 +249,6 @@ def back_home_kb(back_callback: str = "menu_home") -> InlineKeyboardMarkup:
         ]
     ])
 
-# — вспомогательные функции для повестки —
 def next_agenda_item_id(mid: int) -> int:
     items = agendas.get(mid, [])
     return max((it.get("id", 0) for it in items), default=0) + 1
@@ -291,14 +277,12 @@ def build_agenda_text_and_kb(mid: int, page: int, is_admin: bool):
     items_sorted = sorted(items, key=lambda x: x.get("order", 0))
     page_items = items_sorted[start:end]
 
-    # Заголовок: только номер повестки (не дублируем дату/тему/описание)
     text = f"📖 Повестка к совещанию {mid}\n\n"
 
     for it in page_items:
         status = "✅" if it.get("done") else "▫️"
         assigned = f" (ответственный: {it['assigned']})" if it.get("assigned") else ""
 
-        # Нормализуем тип пункта для отображения:
         raw_typ = (it.get("type") or "").strip()
         typ_label = ""
         if raw_typ:
@@ -307,7 +291,6 @@ def build_agenda_text_and_kb(mid: int, page: int, is_admin: bool):
                 typ_label = " (обязательный)"
             elif rt in ("optional", "доп", "дополнительный"):
                 typ_label = " (дополнительный)"
-            # для 'общий' или незнакомого — метки не показываем
 
         text += f"{it['order']}. {status} {it['title']}{typ_label}{assigned}\n"
         if it.get("desc"):
@@ -333,7 +316,6 @@ def build_agenda_text_and_kb(mid: int, page: int, is_admin: bool):
     kb = InlineKeyboardMarkup(inline_keyboard=kb_rows)
     return text, kb
 
-# — хэндлеры —————————————————————————————————————————————
 
 @dp.message(Command("start"))
 async def cmd_start(m: types.Message, state: FSMContext):
@@ -347,12 +329,9 @@ async def cb_home(c: types.CallbackQuery, state: FSMContext):
     await c.answer()
     await state.clear()
     kb = ADMIN_MAIN_KB if c.from_user.id in ADMIN_IDS else USER_MAIN_KB
-    # присылаем новое сообщение вниз
     await c.message.answer("Главное меню:", reply_markup=kb)
-    # удаляем старое меню
     await c.message.delete()
 
-# — СПИСОК совещаний —
 @dp.callback_query(F.data == "menu_list")
 async def cb_list(c: types.CallbackQuery, state: FSMContext):
     await state.update_data(page=0)
@@ -374,7 +353,6 @@ async def show_meetings_page(message: types.Message, user_id: int, page: int):
 
     meets, total_count = get_meetings_page(page)
 
-    # здесь нумерация по порядку отображения
     start_index = page * MEETINGS_PER_PAGE + 1
     text_lines = []
     for offset, (mid, v) in enumerate(meets, start=start_index):
@@ -464,18 +442,15 @@ async def create_get_desc(m: types.Message, state: FSMContext):
     }
     save_meetings()
 
-    # Рассылка всем пользователям
     note = f"🆕 Создано совещание #{idx}\n📅 {data['datetime']}\n📝 {data['title']}"
     for u in all_users:
         await bot.send_message(u, note)
 
-    # Отдельное сообщение создателю с кнопками управления
     await m.answer(
         f"✅ Совещание #{idx} создано.",
         reply_markup=meeting_kb(idx)
     )
 
-    # Планируем напоминания
     try:
         dt = datetime.strptime(data["datetime"], "%d.%m.%y %H:%M")
         now = datetime.now()
@@ -550,7 +525,6 @@ async def cb_meet_del_confirm(c: types.CallbackQuery, state: FSMContext):
     save_meetings()
 
 
-# — ИЗМЕНИТЬ / УДАЛИТЬ из списка —
 @dp.callback_query(F.data=="list_edit")
 async def cb_list_edit(c: types.CallbackQuery, state: FSMContext):
     await c.answer()
@@ -569,14 +543,9 @@ async def pick_edit(m: types.Message, state: FSMContext):
     if mid not in meetings:
         return await m.answer("❌ Не найдено.")
 
-    # Сохраняем id в state — чтобы cb_edit_field / последующие хэндлеры имели доступ
     await state.update_data(edit_id=mid)
-
-    # Показываем меню выбора поля для редактирования (тот же, что для inline редактирования)
     await m.answer(f"Что хотите изменить у совещания #{mid}?", reply_markup=meeting_edit_kb(mid))
 
-    # НЕ переводим в состояние editing_date — дальнейший переход в состояние
-    # выполняет cb_edit_field при нажатии на кнопку (edit_field:...)
 
 @dp.message(States.editing_date)
 async def edit_get_date(m: types.Message, state: FSMContext):
@@ -587,16 +556,12 @@ async def edit_get_date(m: types.Message, state: FSMContext):
     mid = data["edit_id"]
     old = meetings[mid].get("datetime")
     meetings[mid]["datetime"] = m.text.strip()
-
-    # уведомить пользователей о смене (опционально)
     note = f"🔄 Обновлено время совещания #{mid}\nБыло: {old}\nСтало: {m.text.strip()}\n📝 {meetings[mid].get('title','')}"
     for u in all_users:
         try:
             await bot.send_message(u, note)
         except Exception as e:
             logging.warning(f"Не удалось отправить уведомление {u}: {e}")
-
-    # перепланировать напоминания (как при создании)
     try:
         dt = datetime.strptime(meetings[mid]["datetime"], "%d.%m.%y %H:%M")
         now = datetime.now()
@@ -664,7 +629,6 @@ async def cb_meeting_delete_confirm(c: types.CallbackQuery, state: FSMContext):
     reindex_meetings()
     save_meetings()
 
-    # уведомляем пользователей
     for u in all_users - {c.from_user.id}:
         try:
             await bot.send_message(u, f"❌ Совещание #{mid} отменено.")
@@ -674,8 +638,6 @@ async def cb_meeting_delete_confirm(c: types.CallbackQuery, state: FSMContext):
     kb = ADMIN_MAIN_KB if c.from_user.id in ADMIN_IDS else USER_MAIN_KB
     await c.message.answer(f"✅ Совещание #{mid} удалено.", reply_markup=kb)
     await state.clear()
-
-# — ПОВЕСТКА —
 
 @dp.callback_query(F.data == "menu_agenda")
 async def cb_menu_agenda(c: types.CallbackQuery, state: FSMContext):
@@ -722,11 +684,8 @@ async def cb_agenda_notify(c: types.CallbackQuery, state: FSMContext):
 
     if mid not in meetings:
         return await c.message.answer("Совещание не найдено.")
-
-    # Формируем текст повестки
     text, _ = build_agenda_text_and_kb(mid, page=0, is_admin=False)
 
-    # Отправляем всем пользователям
     for u in all_users:
         try:
             await bot.send_message(u, text)
@@ -752,14 +711,11 @@ async def cb_agenda_add_for(c: types.CallbackQuery, state: FSMContext):
     if mid not in meetings:
         return await c.message.answer("Совещание не найдено.")
 
-    # Пометили текущее совещание в state и включаем quick_add поток
     await state.update_data(agenda_mid=mid, quick_add=True)
 
     if agendas.get(mid):
-        # Если повестка уже есть — не говорим, что её 'завели', просим просто заголовок пункта
         await c.message.answer(f"Повестка для совещания #{mid} уже существует. Введите заголовок пункта, чтобы добавить его:")
     else:
-        # Если повестки не было — создаём и сообщаем, что повестка создана
         agendas.setdefault(mid, [])
         await c.message.answer(f"✅ Повестка для совещания #{mid} создана. Введите заголовок пункта, чтобы добавить его:")
 
@@ -780,7 +736,6 @@ async def cb_agenda_del_for(c: types.CallbackQuery, state: FSMContext):
     if not agendas.get(mid):
         return await c.message.answer("Повестка пуста.")
 
-    # Показываем список пунктов
     text = "Введите номер пункта для удаления:\n\n" + "\n".join(
         f"{it['order']}. {it['title']}" for it in sorted(agendas[mid], key=lambda x: x['order'])
     )
@@ -830,12 +785,9 @@ async def cb_agenda_item_del_confirm(c: types.CallbackQuery, state: FSMContext):
 async def agenda_title2_handler(m: types.Message, state: FSMContext):
     logging.info("agenda_title2_handler: from=%s text=%r", m.from_user.id, m.text)
     title_text = m.text.strip()
-
-    # Сохраняем заголовок в состоянии (нужно как для быстрого, так и для многошагового потока)
     await state.update_data(agenda_title=title_text)
 
     data = await state.get_data()
-    # Быстрая вставка: предлагаем выбрать тип (обязательный/дополнительный)
     if data.get("quick_add"):
         kb = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="Обязательный", callback_data="agenda_type:required")],
@@ -845,7 +797,6 @@ async def agenda_title2_handler(m: types.Message, state: FSMContext):
         await state.set_state(States.agenda_type2)
         return
 
-    # Старое поведение: спрашиваем описание и продолжаем многошаговый поток
     await m.answer("Введите описание пункта повестки (или отправьте '-' чтобы оставить пустым):")
     await state.set_state(States.agenda_desc2)
 
@@ -873,15 +824,12 @@ async def agenda_set_type(c: types.CallbackQuery, state: FSMContext):
     """
     await c.answer()
     logging.info("agenda_set_type callback from=%s data=%s", c.from_user.id, c.data)
-
-    # Парсим callback — допускаем два формата
     parts = c.data.split(":")
     if len(parts) == 2:
         typ_code = parts[1]
         data = await state.get_data()
         mid = data.get("agenda_mid")
     elif len(parts) == 3:
-        # формат agenda_type:<mid>:<typ>
         mid = int(parts[1])
         typ_code = parts[2]
     else:
@@ -915,8 +863,6 @@ async def agenda_set_type(c: types.CallbackQuery, state: FSMContext):
     }
     agendas.setdefault(mid, []).append(item)
     logging.info("agenda_set_type: added item id=%s to mid=%s", item_id, mid)
-
-    # Показать обновлённую повестку сразу
     text, kb = build_agenda_text_and_kb(mid, page=0, is_admin=(c.from_user.id in ADMIN_IDS))
     await c.message.answer(text, reply_markup=kb)
 
@@ -976,7 +922,6 @@ async def agenda_type2_text_handler(m: types.Message, state: FSMContext):
 
     await state.clear()
 
-# Показываем меню управления повесткой (кнопки для удаления/редактирования каждого пункта)
 @dp.callback_query(F.data.startswith("agenda_manage:"))
 async def cb_agenda_manage(c: types.CallbackQuery, state: FSMContext):
     await c.answer()
@@ -991,14 +936,11 @@ async def cb_agenda_manage(c: types.CallbackQuery, state: FSMContext):
 
     kb_rows = []
     for it in items:
-        # краткая кнопка с id — не перегружаем клавиатуру длинными подписью
         kb_rows.append([InlineKeyboardButton(text=f"🗑 {it['order']}. {it['title']}", 
                                             callback_data=f"agenda_delete:{mid}:{it['id']}")])
     kb_rows.append([InlineKeyboardButton(text="🏠 Меню", callback_data="menu_home")])
     await c.message.answer("Выберите пункт для удаления/редактирования:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
 
-# — ПРЕДЛОЖЕНИЯ —
-# Нажатие «➕ Предложить тему» в главном меню
 @dp.callback_query(F.data=="menu_propose")
 async def cb_propose(c: types.CallbackQuery, state: FSMContext):
     await c.answer(); await state.clear()
@@ -1021,12 +963,9 @@ async def pick_propose(m: types.Message, state: FSMContext):
     await m.answer("Напишите текст вашего предложения:")
     await state.set_state(States.propose_text)
 
-# Получили сам текст предложения
 @dp.message(States.propose_text)
 async def got_propose_text(m: types.Message, state: FSMContext):
-    # сохраняем временно
     await state.update_data(propose_text=m.text)
-    # даём выбор: анонимно или с именем
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="Анонимно", callback_data="prop_anon")],
         [InlineKeyboardButton(text="С именем", callback_data="prop_named")],
@@ -1034,7 +973,6 @@ async def got_propose_text(m: types.Message, state: FSMContext):
     await m.answer("Как вы хотите подписать своё предложение?", reply_markup=keyboard)
     await state.set_state(States.propose_confirm)
   
-# Обработчик кнопок выбора формата
 @dp.callback_query(F.data.in_(["prop_anon","prop_named"]))
 async def confirm_propose(c: types.CallbackQuery, state: FSMContext):
     await c.answer()
@@ -1061,20 +999,16 @@ async def cb_view_props(c: types.CallbackQuery, state: FSMContext):
         text += f"\nСовещание {mid}:\n" + "\n".join(f"{u}: {t}" for u,t in lst)+"\n"
     await c.message.answer(text or "Нет предложений.", reply_markup=ADMIN_MAIN_KB)
 
-# — АДМИН: Назначить/снять —
 @dp.callback_query(F.data=="menu_assign")
 async def cb_assign(c: types.CallbackQuery, state: FSMContext):
     await c.answer()
-    # формируем текст со списком админов
     admins_list = "\n".join(f"- {uid}" for uid in sorted(ADMIN_IDS))
     text = f"👥 Текущие администраторы:\n{admins_list or '— нет админов —'}\n\nЧто вы хотите сделать?"
-    # клавиатура с добавлением/удалением
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="➕ Добавить", callback_data="assign_do:add")],
         [InlineKeyboardButton(text="➖ Удалить", callback_data="assign_do:remove")],
         [InlineKeyboardButton(text="🏠 Меню",    callback_data="menu_home")],
     ])
-    # отправляем одно сообщение с текстом и кнопками
     await c.message.answer(text, reply_markup=kb)
     await state.set_state(States.assign_action)
 
@@ -1082,7 +1016,7 @@ async def cb_assign(c: types.CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data.startswith("assign_do:"))
 async def cb_assign_do(c: types.CallbackQuery, state: FSMContext):
     await c.answer()
-    action = c.data.split(":",1)[1]   # "add" или "remove"
+    action = c.data.split(":",1)[1]
     await state.update_data(assign_action=action)
     await c.message.answer("Введите, пожалуйста, Telegram-ID пользователя:")
     await state.set_state(States.assign_id)
@@ -1103,13 +1037,11 @@ async def cb_assign_apply(m: types.Message, state: FSMContext):
         try: await bot.send_message(uid, "ℹ️ Ваши права администратора бота отозваны.")
         except: pass
 
-    # Возвращаем главное меню
     kb = ADMIN_MAIN_KB if m.from_user.id in ADMIN_IDS else USER_MAIN_KB
     await m.answer(text, reply_markup=kb)
     await state.clear()
 
 load_data()
-# — запуск —
 async def main():
     await dp.start_polling(bot)
 
